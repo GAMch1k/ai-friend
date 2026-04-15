@@ -73,6 +73,9 @@ class FriendRuntime:
         self._update_face_presence(primary)
         tracked_person = self._update_tracking(primary, current_time)
 
+        if primary is not None and tracked_person is not None:
+            print(f"RECOGNIZED_FACE name={tracked_person.display_name}")
+
         if self.hardware.touch_sensor.poll_event(
             current_time, self.settings.touch_cooldown
         ) and tracked_person is not None:

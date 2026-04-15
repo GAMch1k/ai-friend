@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import io
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -129,6 +131,48 @@ class FriendRuntimeTests(unittest.TestCase):
 
                 asleep = runtime.tick(now=3.0)
                 self.assertEqual(asleep.state, EmotionState.SLEEP)
+            finally:
+                repository.close()
+
+    def test_recognized_face_prints_name(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repository = FriendRepository(Path(temp_dir) / "friend.db")
+            try:
+                settings = Settings(
+                    database_path=Path(temp_dir) / "friend.db",
+                    face_on_threshold=1,
+                    face_off_threshold=1,
+                    sleep_timeout=60.0,
+                    blink_interval=999.0,
+                )
+                display = FakeDisplay()
+                touch = FakeTouchSensor([False])
+                camera = FakeCamera()
+                known = repository.create_person(
+                    signature=[0.1, 0.2, 0.3],
+                    focal_points=[(0.3, 0.3)],
+                    display_name="Alice",
+                )
+                observed = FaceObservation(
+                    bbox=(0, 0, 50, 50),
+                    signature=known.face_signature,
+                    focal_points=known.focal_points,
+                    confidence=0.9,
+                    person=known,
+                )
+                vision = FakeVision([[observed]])
+                runtime = FriendRuntime(
+                    settings=settings,
+                    repository=repository,
+                    hardware=HardwareBundle(display=display, touch_sensor=touch, camera=camera),
+                    vision=vision,
+                )
+
+                buffer = io.StringIO()
+                with redirect_stdout(buffer):
+                    runtime.tick(now=1.0)
+
+                self.assertIn("RECOGNIZED_FACE name=Alice", buffer.getvalue())
             finally:
                 repository.close()
 
