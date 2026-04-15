@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import argparse
 import time
+from collections.abc import Sequence
 
 from .config import Settings
 from .hardware import HardwareBundle, build_hardware
@@ -24,11 +26,13 @@ class FriendRuntime:
         repository: FriendRepository,
         hardware: HardwareBundle,
         vision: FaceRecognitionService | object,
+        debug: bool = False,
     ) -> None:
         self.settings = settings
         self.repository = repository
         self.hardware = hardware
         self.vision = vision
+        self.debug = debug
 
         now = time.time()
         self.face_seen_count = 0
@@ -39,13 +43,18 @@ class FriendRuntime:
         self.next_blink_time = now + settings.blink_interval
         self.tracked_person_id: int | None = None
         self.pending_unknown_frames = 0
+        self.last_tick_started_at: float | None = None
 
     def run_forever(self) -> None:
         print("START AI FRIEND")
         self._render(EmotionState.SLEEP)
         try:
             while True:
+                tick_started_at = time.perf_counter()
+                if self.debug:
+                    self._print_tick_interval(tick_started_at)
                 self.tick()
+                self.last_tick_started_at = tick_started_at
                 time.sleep(self.settings.loop_delay)
         except KeyboardInterrupt:
             print("STOPPED")
@@ -80,6 +89,13 @@ class FriendRuntime:
             tracked_person=tracked_person,
             observations=observations,
         )
+
+    def _print_tick_interval(self, tick_started_at: float) -> None:
+        if self.last_tick_started_at is None:
+            print("DEBUG tick_interval_ms=first")
+            return
+        tick_interval_ms = (tick_started_at - self.last_tick_started_at) * 1000.0
+        print(f"DEBUG tick_interval_ms={tick_interval_ms:.2f}")
 
     def _update_face_presence(self, primary: FaceObservation | None) -> None:
         seen_now = primary is not None
@@ -152,12 +168,23 @@ class FriendRuntime:
         return self.repository.get_person(self.tracked_person_id)
 
 
-def main() -> None:
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run the AI friend robot runtime.")
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Print the time between tick starts in milliseconds.",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    args = parse_args(argv)
     settings = Settings.from_env()
     repository = FriendRepository(settings.database_path)
     hardware = build_hardware(settings)
     vision = FaceRecognitionService(settings, repository)
-    runtime = FriendRuntime(settings, repository, hardware, vision)
+    runtime = FriendRuntime(settings, repository, hardware, vision, debug=args.debug)
     runtime.run_forever()
 
 
