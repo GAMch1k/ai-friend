@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 from .config import Settings
@@ -97,3 +98,68 @@ class FaceRecognitionService:
                 )
             )
         return normalized_points
+
+
+class AsyncFaceRecognitionService:
+    def __init__(self, service: FaceRecognitionService) -> None:
+        self.service = service
+        self._condition = threading.Condition()
+        self._latest_observations: list[FaceObservation] = []
+        self._pending_frame = None
+        self._stop_requested = False
+        self._worker_error: BaseException | None = None
+        self._thread = threading.Thread(
+            target=self._worker_loop,
+            name="face-recognition-worker",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def analyze(self, frame) -> list[FaceObservation]:
+        self._raise_worker_error()
+        if frame is not None:
+            frame_to_queue = frame.copy() if hasattr(frame, "copy") else frame
+            with self._condition:
+                self._pending_frame = frame_to_queue
+                self._condition.notify()
+
+        with self._condition:
+            return list(self._latest_observations)
+
+    def close(self) -> None:
+        with self._condition:
+            self._stop_requested = True
+            self._pending_frame = None
+            self._condition.notify_all()
+
+        self._thread.join(timeout=2.0)
+        self._raise_worker_error()
+
+    def _worker_loop(self) -> None:
+        while True:
+            with self._condition:
+                while self._pending_frame is None and not self._stop_requested:
+                    self._condition.wait()
+
+                if self._stop_requested:
+                    return
+
+                frame = self._pending_frame
+                self._pending_frame = None
+
+            try:
+                observations = self.service.analyze(frame)
+            except BaseException as exc:
+                with self._condition:
+                    self._worker_error = exc
+                    self._stop_requested = True
+                return
+
+            with self._condition:
+                self._latest_observations = observations
+
+    def _raise_worker_error(self) -> None:
+        with self._condition:
+            error = self._worker_error
+        if error is not None:
+            raise RuntimeError("Face recognition worker failed") from error

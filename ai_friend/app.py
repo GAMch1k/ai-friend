@@ -8,7 +8,7 @@ from .config import Settings
 from .hardware import HardwareBundle, build_hardware
 from .models import EmotionState, FaceObservation, PersonProfile, RuntimeStatus
 from .storage import FriendRepository, utc_now_iso
-from .vision import FaceRecognitionService
+from .vision import AsyncFaceRecognitionService, FaceRecognitionService
 
 
 def state_from_affinity(affinity: int) -> EmotionState:
@@ -59,6 +59,7 @@ class FriendRuntime:
         except KeyboardInterrupt:
             print("STOPPED")
         finally:
+            self._close_vision()
             self.hardware.camera.close()
             self._render(EmotionState.SLEEP)
             self.repository.close()
@@ -89,6 +90,11 @@ class FriendRuntime:
             tracked_person=tracked_person,
             observations=observations,
         )
+
+    def _close_vision(self) -> None:
+        close_vision = getattr(self.vision, "close", None)
+        if callable(close_vision):
+            close_vision()
 
     def _print_tick_interval(self, tick_started_at: float) -> None:
         if self.last_tick_started_at is None:
@@ -183,7 +189,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     settings = Settings.from_env()
     repository = FriendRepository(settings.database_path)
     hardware = build_hardware(settings)
-    vision = FaceRecognitionService(settings, repository)
+    vision = AsyncFaceRecognitionService(FaceRecognitionService(settings, repository))
     runtime = FriendRuntime(settings, repository, hardware, vision, debug=args.debug)
     runtime.run_forever()
 
